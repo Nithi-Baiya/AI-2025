@@ -1,90 +1,79 @@
 import streamlit as st
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import LabelEncoder
+import numpy as np
 from datetime import datetime, timedelta
-
-# --- 1. เตรียมข้อมูลและ Train AI ---
-@st.cache_resource # ใช้ cache เพื่อให้โหลด Model ครั้งเดียว ไม่ต้องโหลดใหม่ทุกครั้งที่กดปุ่ม
-def train_model():
+ 
+# --- 1. โหลดข้อมูล Dataset ---
+@st.cache_data # ใช้ Cache เพื่อให้แอปโหลดไวขึ้น
+def load_data():
     df = pd.read_csv('Sleep_health_and_lifestyle_dataset.csv')
-    
-    # เคลีนข้อมูลเบื้องต้น
-    # แปลง Gender และ BMI Category เป็นตัวเลข
-    le_gender = LabelEncoder()
-    df['Gender'] = le_gender.fit_transform(df['Gender'])
-    
-    le_bmi = LabelEncoder()
-    df['BMI Category'] = le_bmi.fit_transform(df['BMI Category'])
-    
-    # เลือก Features ที่สำคัญมาสอน AI
-    features = ['Gender', 'Age', 'Sleep Duration', 'Physical Activity Level', 'Stress Level', 'BMI Category', 'Heart Rate', 'Daily Steps']
-    X = df[features]
-    y = df['Quality of Sleep'] # เราจะทำนายคุณภาพการนอน
-    
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X, y)
-    
-    return model, le_gender, le_bmi
-
-model, le_gender, le_bmi = train_model()
-
-# --- 2. หน้าตาแอป (UI) ---
-st.set_page_config(page_title="AI Sleep Predictor", page_icon="🤖")
-st.title("🤖 AI Sleep Quality Predictor")
-st.markdown("วิเคราะห์คุณภาพการนอนของคุณด้วย AI จากข้อมูลงานวิจัยจริง")
-
+    return df
+ 
+df = load_data()
+ 
+st.set_page_config(page_title="Data-Driven Sleep Analyzer", page_icon="📊")
+ 
+st.title("📊 Sleep Analyzer (Data-Driven)")
+st.markdown("ประเมินคุณภาพการนอนของคุณโดยเปรียบเทียบกับ **ข้อมูลจริงจากกลุ่มตัวอย่าง 374 ราย**")
+ 
+# --- 2. ส่วนรับข้อมูลจากผู้ใช้ ---
 with st.sidebar:
-    st.header("👤 ข้อมูลพื้นฐาน")
-    gender = st.selectbox("เพศ", ["Male", "Female"])
-    age = st.number_input("อายุ", 10, 100, 30)
-    steps = st.number_input("จำนวนก้าวเดินเมื่อวาน", 0, 20000, 5000)
-    heart_rate = st.number_input("อัตราการเต้นหัวใจขณะพัก (BPM)", 40, 120, 70)
-    bmi_cat = st.selectbox("กลุ่ม BMI", ["Normal", "Overweight", "Obese"])
-
-st.subheader("⏰ ข้อมูลจากนาฬิกาปลุกและการนอน")
+    st.header("👤 ข้อมูลของคุณ")
+    user_job = st.selectbox("อาชีพของคุณ", df['Occupation'].unique())
+    user_age = st.slider("อายุ", 20, 60, 30)
+    user_bmi = st.selectbox("กลุ่ม BMI", df['BMI Category'].unique())
+ 
+st.subheader("⏰ บันทึกการนอนเช้านี้")
 col1, col2 = st.columns(2)
 with col1:
-    bed_time = st.time_input("เข้านอนจริง", datetime.strptime("22:00", "%H:%M").time())
-    wake_time = st.time_input("ตื่นจริง", datetime.strptime("06:00", "%H:%M").time())
+    bed_time = st.time_input("เข้านอนตอน", datetime.strptime("23:00", "%H:%M").time())
+    alarm_time = st.time_input("ตั้งปลุกไว้ตอน", datetime.strptime("06:00", "%H:%M").time())
 with col2:
-    stress = st.slider("ระดับความเครียด (1-10)", 1, 10, 5)
-    activity = st.slider("ระดับกิจกรรมทางกาย (นาที/วัน)", 0, 120, 30)
-
-# --- 3. การทำนายผล ---
-if st.button("🚀 ให้ AI วิเคราะห์ผล"):
-    # คำนวณ Sleep Duration
-    start = datetime.combine(datetime.today(), bed_time)
-    end = datetime.combine(datetime.today(), wake_time)
-    if end <= start: end += timedelta(days=1)
-    duration = (end - start).total_seconds() / 3600
-    
-    # เตรียมข้อมูลสำหรับเข้า Model
-    input_data = pd.DataFrame([[
-        le_gender.transform([gender])[0],
-        age,
-        duration,
-        activity,
-        stress,
-        le_bmi.transform([bmi_cat])[0],
-        heart_rate,
-        steps
-    ]], columns=['Gender', 'Age', 'Sleep Duration', 'Physical Activity Level', 'Stress Level', 'BMI Category', 'Heart Rate', 'Daily Steps'])
-    
-    prediction = model.predict(input_data)[0]
-    
+    actual_wake = st.time_input("ตื่นจริงตอน", datetime.strptime("06:15", "%H:%M").time())
+    stress_input = st.slider("ระดับความเครียดวันนี้ (1-10)", 1, 10, 5)
+ 
+if st.button("📈 วิเคราะห์โดยเทียบกับ Dataset"):
+    # คำนวณเวลานอนจริงของผู้ใช้
+    d_bed = datetime.combine(datetime.today(), bed_time)
+    d_wake = datetime.combine(datetime.today(), actual_wake)
+    if d_wake <= d_bed: d_wake += timedelta(days=1)
+    user_sleep_duration = (d_wake - d_bed).total_seconds() / 3600
+ 
+    # --- 3. การเปรียบเทียบกับ Dataset ---
+    # กรองข้อมูลตามอาชีพหรือกลุ่มที่ใกล้เคียง
+    comparison_group = df[df['Occupation'] == user_job]
+    avg_sleep_group = comparison_group['Sleep Duration'].mean()
+    avg_quality_group = comparison_group['Quality of Sleep'].mean()
+ 
     st.divider()
+ 
+    # --- 4. แสดงผลลัพธ์ ---
+    st.subheader(f"เปรียบเทียบกับกลุ่มอาชีพ: {user_job}")
     
-    # แสดงผลลัพธ์
-    st.header(f"คุณภาพการนอนที่ AI ทำนาย: {prediction}/10")
+    m1, m2 = st.columns(2)
+    # เทียบชั่วโมงนอนของผู้ใช้ กับ ค่าเฉลี่ยของคนอาชีพเดียวกันใน Dataset
+    diff_duration = user_sleep_duration - avg_sleep_group
+    m1.metric("ชั่วโมงการนอนของคุณ", f"{user_sleep_duration:.1f} ชม.", f"{diff_duration:.1f} ชม. จากค่าเฉลี่ยกลุ่ม")
     
-    if prediction >= 8:
-        st.balloons()
-        st.success("AI วิเคราะห์ว่าคุณภาพการนอนของคุณอยู่ในเกณฑ์ดีเยี่ยม!")
-    elif prediction >= 6:
-        st.warning("AI วิเคราะห์ว่าคุณภาพการนอนอยู่ในระดับปานกลาง ควรพักผ่อนให้มากขึ้น")
+    # คำนวณคะแนนโดยอิงจาก Stress Level ใน Dataset
+    # ใน Dataset ยิ่ง Stress สูง Quality ยิ่งต่ำ เราจะใช้ Logic นี้มาประเมิน
+    expected_quality = 10 - stress_input # Logic คร่าวๆ: เครียดมาก คุณภาพน้อย
+    m2.metric("คาดการณ์คุณภาพการนอน", f"{expected_quality}/10", f"ฐานข้อมูลระบุค่าเฉลี่ยที่ {avg_quality_group:.1f}")
+ 
+    # --- 5. คำแนะนำแบบเจาะจง (Insights) ---
+    st.info("💡 **Insight จากฐานข้อมูล:**")
+    
+    # ตรวจสอบความเสี่ยงโรคจากการนอน (Sleep Disorder) ในกลุ่มอาชีพเดียวกัน
+    disorder_stats = comparison_group['Sleep Disorder'].value_counts(normalize=True) * 100
+    if 'Insomnia' in disorder_stats or 'Sleep Apnea' in disorder_stats:
+        risk = disorder_stats.get('Insomnia', 0) + disorder_stats.get('Sleep Apnea', 0)
+        st.write(f"- ในกลุ่มอาชีพ {user_job} ของคุณ พบความเสี่ยงโรคจากการนอนประมาณ {risk:.1f}%")
+    
+    if user_sleep_duration < avg_sleep_group:
+        st.warning(f"- วันนี้คุณนอนน้อยกว่าค่าเฉลี่ยของเพื่อนร่วมอาชีพ {user_job} เล็กน้อย พยายามหาเวลาพักผ่อนเพิ่มนะครับ")
     else:
-        st.error("AI พบว่าคุณภาพการนอนของคุณค่อนข้างต่ำ โปรดระมัดระวังสุขภาพ")
-
-    # ข้อมูลเสริมจาก Dataset
-    st.info(f"💡 จากข้อมูลที่คุณกรอก AI พบว่าระยะเวลาการนอน {duration:.1f} ชม. และระดับความเครียด {stress}/10 เป็นปัจจัยสำคัญต่อคะแนนของคุณ")
+        st.success(f"- ยอดเยี่ยม! คุณนอนได้มากกว่าค่าเฉลี่ยของกลุ่มอาชีพ {user_job}")
+ 
+    # แสดงกราฟเปรียบเทียบ
+    st.write("### กราฟแสดงความสัมพันธ์ของกลุ่มตัวอย่าง (Sleep Duration vs Quality)")
+    st.scatter_chart(data=comparison_group, x='Sleep Duration', y='Quality of Sleep', color="#FF4B4B")
